@@ -1,162 +1,100 @@
-# Copyright Google LLC
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing perepo_managerissions and
+# See the License for the specific language governing permissions and
 # limitations under the License.
+"""This package provides functionality to sign and verify models."""
+from dataclasses import dataclass
 
-from sigstore.sign import SigningContext
+from google.protobuf import json_format
+from in_toto_attestation.v1 import statement_pb2 as statement_pb
+from sigstore_protobuf_specs.dev.sigstore.bundle import v1 as bundle_pb
 
-from sigstore.oidc import (
-    IdentityToken,
-    ExpiredIdentity,
-    Issuer,
-    detect_credential,
-)
-from sigstore_protobuf_specs.dev.sigstore.bundle.v1 import Bundle
-from sigstore.verify import (
-    policy,
-    Verifier,
-)
-from sigstore.verify.models import (
-    VerificationMaterials,
-)
+from hashing import model_hash
+from signature.signing import Signer
+from signature.verifying import Verifier
 
-from sigstore._internal.fulcio.client import (
-    ExpiredCertificate,
-)
-
-import io
-from pathlib import Path
-from typing import Optional
-from serialize import Serializer
-import psutil
-import sys
+SUPPORTED_METHODS = ['sigstore', 'private-key', 'pki', 'skip']
+STATEMENT_FAILURE = 'STATEMENT_FAILURE'
+SIGNATURE_FAILURE = 'SIGNATURE_FAILURE'
+SUBJECT_FAILURE = 'SUBJECT_FAILURE'
 
 
-def chunk_size() -> int:
-    return int(psutil.virtual_memory().available // 2)
+@dataclass
+class ModelVerificationResult:
+    passed: bool
+    information: dict[str, str]
 
 
-# TODO: Update this class to have a status instead of success.
-class BaseResult:
-    def __init__(self, success: bool = True, reason: str = "success"):
-        self.success = success
-        self.reason = reason
-
-    def __bool__(self) -> bool:
-        return self.success
-
-    def __str__(self) -> str:
-        return f"success=\"{self.success}\" reason=\"{self.reason}\""
+def __load_bundle(path: str) -> bundle_pb.Bundle:
+    with open(path, 'r') as fd:
+        data = fd.read()
+    bundle = bundle_pb.Bundle().from_json(value=data)
+    return bundle
 
 
-class SignatureResult(BaseResult):
-    pass
+def store_bundle(bundle: bundle_pb.Bundle, path: str):
+    with open(path, 'w') as fd:
+        fd.write(bundle.to_json())
 
 
-class SigstoreSigner():
-    def __init__(self,
-                 disable_ambient: bool = False,
-                 start_default_browser: bool = False,
-                 oidc_issuer: str = None):
-        self.signing_ctx = SigningContext.production()
-        self.disable_ambient = disable_ambient
-        self.start_default_browser = start_default_browser
-        self.oidc_issuer = oidc_issuer
-        # NOTE: The client ID to use during OAuth2 flow.
-        self.client_id = "sigstore"
-
-    def get_identity_token(self) -> Optional[IdentityToken]:
-        token: IdentityToken
-        client_id = self.client_id
-        if not self.disable_ambient:
-            token = detect_credential()
-            # Happy path: we've detected an ambient credential,
-            # so we can return early.
-            if token:
-                return IdentityToken(token)
-
-        # TODO(): Support staging for testing.
-        if self.oidc_issuer is not None:
-            issuer = Issuer(self.oidc_issuer)
-        else:
-            issuer = Issuer.production()
-
-        token = issuer.identity_token(client_id=client_id,
-                                      force_oob=not self.start_default_browser)
-        return token
-
-    # NOTE: Only path in the top-level folder are considered for ignorepaths.
-    def sign(self, inputfn: Path, signaturefn: Path,
-             ignorepaths: [Path]) -> SignatureResult:
-        try:
-            oidc_token = self.get_identity_token()
-            if not oidc_token:
-                raise ValueError("No identity token supplied or detected!")
-            print(f"identity-provider: {oidc_token.issuer}",
-                  file=sys.stderr)
-            print(f"identity: {oidc_token.identity}", file=sys.stderr)
-
-            contentio = io.BytesIO(Serializer.serialize_v1(
-                inputfn, chunk_size(), signaturefn, ignorepaths))
-            with self.signing_ctx.signer(oidc_token) as signer:
-                result = signer.sign(input_=contentio)
-                with signaturefn.open(mode="w") as b:
-                    print(result.to_bundle().to_json(), file=b)
-            return SignatureResult()
-        except ExpiredIdentity:
-            return SignatureResult(success=False,
-                                   reason="exception caught: Signature failed: identity token has expired")  # noqa: E501
-        except ExpiredCertificate:
-            return SignatureResult(success=False,
-                                   reason="exception caught: Signature failed: Fulcio signing certificate has expired")  # noqa: E501
-        except Exception as e:
-            return SignatureResult(success=False,
-                                   reason=f"exception caught: {str(e)}")
+def sign_model(model_path: str, signer: Signer) -> bundle_pb.Bundle:
+    statement = model_hash.hash_model(model_path)
+    return signer.sign(statement)
 
 
-# TODO: re-visit error handling and use a verbosity mode
-# to avoid leaking info
-class VerificationResult(BaseResult):
-    pass
+def __compare_subjects(
+    signature: statement_pb.Statement, local: statement_pb.Statement
+) -> tuple[bool, str]:
+    sub_a = {}
+    sub_b = {}
+    for s in signature.subject:
+        if not 'sha256' in s.digest.keys():
+            return False, f'no sha256 digest found for {s.name}'
+        sub_a[s.name] = s.digest['sha256']
+    for s in local.subject:
+        if not 'sha256' in s.digest.keys():
+            return False, f'no sha256 digest found for {s.name}'
+        sub_b[s.name] = s.digest['sha256']
+
+    if len(sub_a) != len(sub_b):
+        return (
+            False,
+            f'the number of subjects isn\'t equal signature {len(sub_a)} vs local {len(sub_b)}',
+        )
+
+    for k, v in sub_a.items():
+        
+        if v != sub_b[k]:
+            return False, f'hash mismatch for {k}'
+    return True, ''
 
 
-class SigstoreVerifier():
-    def __init__(self, oidc_provider: str, identity: str):
-        self.oidc_provider = oidc_provider
-        self.identity = identity
-        self.verifier = Verifier.production()
+def verify_model(
+    bundle_path: str, local_model_path: str, verifier: Verifier
+) -> ModelVerificationResult:
+    result = ModelVerificationResult(passed=False, information={})
+    bundle = __load_bundle(bundle_path)
+    signature_verification_result = verifier.verify(bundle)
+    if not signature_verification_result.passed:
+        result.passed = False
+        result.information[SIGNATURE_FAILURE] = (
+            signature_verification_result.information
+        )
+        return result
 
-    # NOTE: Only path in the top-level folder are considered for ignorepaths.
-    def verify(self, inputfn: Path, signaturefn: Path,
-               ignorepaths: [Path], offline: bool) -> VerificationResult:
-        try:
-            bundle_bytes = signaturefn.read_bytes()
-            bundle = Bundle().from_json(bundle_bytes)
-
-            material: tuple[Path, VerificationMaterials]
-            contentio = io.BytesIO(Serializer.serialize_v1(
-                inputfn, chunk_size(), signaturefn, ignorepaths))
-            material = VerificationMaterials.from_bundle(input_=contentio,
-                                                         bundle=bundle,
-                                                         offline=offline)
-            policy_ = policy.Identity(
-                identity=self.identity,
-                issuer=self.oidc_provider,
-            )
-            result = self.verifier.verify(materials=material, policy=policy_)
-            if result:
-                return VerificationResult()
-            return VerificationResult(success=False, reason=result.reason)
-        except Exception as e:
-            return VerificationResult(success=False,
-                                      reason=f"exception caught: {str(e)}")
-        raise ValueError("unreachable")
+    payload = bundle.dsse_envelope.payload
+    peer_statement = json_format.Parse(payload, statement_pb.Statement())
+    local_statement = model_hash.hash_model(local_model_path)
+    result.passed, info = __compare_subjects(peer_statement, local_statement.pb)
+    if not result.passed:
+        result.information[SUBJECT_FAILURE] = info
+    return result
