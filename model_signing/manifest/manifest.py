@@ -116,19 +116,17 @@ class FileManifestItem(ManifestItem):
         self.digest = digest
 
 
+@dataclasses.dataclass(frozen=True)
 class FileLevelManifest(ItemizedManifest):
     """A detailed manifest, recording integrity of every model file."""
+    items: list[FileManifestItem]
 
-    def __init__(self, items: Iterable[FileManifestItem]):
-        """Builds an itemized manifest from a collection of files.
-
-        Rather than recording the items in a list, we use a dictionary, to allow
-        efficient updates and retrieval of digests.
-        """
-        self._item_to_digest = {item.path: item.digest for item in items}
-
-    def __eq__(self, other: Self):
-        return self._item_to_digest == other._item_to_digest
+    def __eq__(self, value: Self) -> bool:
+        local_items_dict = {item.path: item.digest.digest_value
+                            for item in self.items}
+        peer_items_dict = {item.path: item.digest.digest_value
+                           for item in value.items}
+        return local_items_dict == peer_items_dict
 
 
 @dataclasses.dataclass
@@ -168,13 +166,7 @@ class ShardedFileManifestItem(ManifestItem):
         return (self.path, self.start, self.end)
 
 
+@dataclasses.dataclass(frozen=True)
 class ShardLevelManifest(FileLevelManifest):
     """A detailed manifest, recording integrity of every model file."""
-
-    def __init__(self, items: Iterable[ShardedFileManifestItem]):
-        """Builds an itemized manifest from a collection of files.
-
-        Rather than recording the items in a list, we use a dictionary, to allow
-        efficient updates and retrieval of digests.
-        """
-        self._item_to_digest = {item.input_tuple: item.digest for item in items}
+    items: list[ShardedFileManifestItem]

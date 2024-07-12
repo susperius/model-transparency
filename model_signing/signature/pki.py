@@ -34,13 +34,13 @@ from model_signing.signature.verifying import Verifier
 from model_signing.signature.verifying import VerificationError
 
 
-def __load_single_cert(path: str) -> x509.Certificate:
+def _load_single_cert(path: str) -> x509.Certificate:
     with open(path, 'rb') as fd:
         cert = x509.load_pem_x509_certificate(fd.read())
     return cert
 
 
-def __load_multiple_certs(paths: list[str]) -> list[x509.Certificate]:
+def _load_multiple_certs(paths: list[str]) -> list[x509.Certificate]:
     certs = b''
     for p in paths:
         with open(p, 'rb') as fd:
@@ -75,8 +75,8 @@ class PKISigner(Signer):
                   signing_cert_path: str,
                   cert_chain_paths: list[str]) -> None:
         private_key = load_ec_private_key(private_key_path)
-        signing_cert = __load_single_cert(signing_cert_path)
-        cert_chain = __load_multiple_certs(cert_chain_paths)
+        signing_cert = _load_single_cert(signing_cert_path)
+        cert_chain = _load_multiple_certs(cert_chain_paths)
         return cls(private_key, signing_cert, cert_chain)
 
     @staticmethod
@@ -125,9 +125,9 @@ class PKIVerifier(Verifier):
     def from_paths(cls, root_cert_paths: Optional[list[str]] = None) -> None:
         crypto_trust_roots: list[x509.Certificate] = []
         if root_cert_paths:
-            crypto_trust_roots = __load_multiple_certs(root_cert_paths)
+            crypto_trust_roots = _load_multiple_certs(root_cert_paths)
         else:
-            crypto_trust_roots = __load_multiple_certs([certifi.where()])
+            crypto_trust_roots = _load_multiple_certs([certifi.where()])
         return cls(crypto_trust_roots)
 
     def verify(self, bundle: bundle_pb.Bundle) -> None:

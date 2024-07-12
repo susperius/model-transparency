@@ -11,5 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import pathlib
 
-SUPPORTED_METHODS = ['sigstore', 'pki', 'private-key', 'skip']
+from model_signing.hashing import hashing
+from model_signing.manifest import in_toto
+from model_signing.manifest import manifest
+
+_MANIFEST = manifest.FileLevelManifest([
+    manifest.FileManifestItem(
+        path=pathlib.Path('/abc'),
+        digest=hashing.Digest('FANCY_HASH', digest_value=b'\x41\x41\x41\x41'))
+])
+
+
+def test_conversion():
+    stmnt = in_toto.manifest_to_statement(_MANIFEST)
+    man = in_toto.statement_to_manifest(stmnt)
+    assert man == _MANIFEST

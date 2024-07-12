@@ -22,7 +22,7 @@ from sigstore import oidc
 from sigstore import sign
 from sigstore.verify import verifier as sig_verifier
 from sigstore.verify import policy as sig_policy
-from sigstore.verify import models as sig_models
+from sigstore import models as sig_models
 from sigstore_protobuf_specs.dev.sigstore.bundle import v1 as bundle_pb
 
 from model_signing.signature.signing import Signer

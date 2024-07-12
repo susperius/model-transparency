@@ -19,157 +19,75 @@ Model signers should monitor for occurences of their signing identity in the
 log. Sigstore is actively developing a [log
 monitor](https://github.com/sigstore/rekor-monitor) that runs on GitHub Actions.
 
-![Signing models with Sigstore](images/sigstore-model-diagram.png)
+## Model Signing CLI
 
-## Usage
+The `sign.py` and `verify.py` scripts aim to provide the necessary functionality
+to sign and verify ML models. For signing and verification the following methods
+are supported:
 
-You will need to install a few prerequisites to be able to run all of the
-examples below:
+* Sigstore (sigstore.dev)
+* Bring your own key pair
+* Bring your own PKI
+* Skip signing (only hash and create a bundle)
+
+The signing part creates a [sigstore bundle](https://github.com/sigstore/protobuf-specs/blob/main/protos/sigstore_bundle.proto)
+protobuf that is stored as in JSON format. The bundle contains the verification
+material necessary to check the payload and a payload as a [DSSE envelope](https://github.com/sigstore/protobuf-specs/blob/main/protos/envelope.proto).
+Further the DSSE envelope contains an in-toto statment and the signature over
+that statement. The signature format and how the the signature is computed can
+be seen [here](https://github.com/secure-systems-lab/dsse/blob/v1.0.0/protocol.md).
+
+Finally, the statement itself contains subjects which are a list of (file path,
+digest) pairs a predicate type set to `model_signing/v1/model`and a dictionary
+f predicates. The idea is to use the predicates to store (and therefor sign) model
+card information in the future.
+
+The verification part reads the sigstore bundle file and firstly verifies that the
+signature is valid and secondly compute the model's file hashes again to compare
+against the signed ones.
+
+### Usage
+
+There are two scripts one can be used to create and sign a bundle and the other to
+verify a bundle. Furthermore, the functionality can be used directly from other
+Python tools. The `sign.py` and `verify.py` scripts can be used as canonical
+how-to examples.
+
+The easiest way to use the scripts directly is from a virtual environment:
 
 ```bash
-sudo apt install git git-lfs python3-venv python3-pip unzip
-git lfs install
+$ python3 -m venv .venv
+$ source .venv/bin/activate
+(.venv) $ pip install -r install/requirements.in
 ```
 
-After this, you can clone the repository, create a Python virtual environment
-and install the dependencies needed by the project:
+## Sign
 
 ```bash
-git clone git@github.com:sigstore/model-transparency.git
-cd model-transparency/model_signing
-python3 -m venv test_env
-source test_env/bin/activate
-os=Linux # Supported: Linux, Windows, Darwin.
-python3 -m pip install --require-hashes -r "install/requirements_${os}".txt
+(.venv) $ python3 sign.py --model_path ${MODEL_PATH} --method {sigstore, private-key, pki} {additional parameters depending on method}
 ```
 
-After this point, you can use the project to sign and verify models and
-checkpoints. A help message with all arguments can be obtained by passing `-h`
-argument, either to the main driver or to the two subcommands:
+## Verify
 
 ```bash
-python3 main.py -h
-python3 main.py sign -h
-python3 main.py verify -h
+(.venv) $ python3 verify.py --model_path ${MODEL_PATH} --method {sigstore, private-key, pki} {additional parameters depending on method}
 ```
 
-Signing a model requires passing an argument for the path to the model. This can
-be a path to a file or a directory (for large models, or model formats such as
-`SavedModel` which are stored as a directory of related files):
+### Examples
+
+#### Bring Your Own Key
 
 ```bash
-path=path/to/model
-python3 main.py sign --path "${path}"
-```
-
-The sign process will start an OIDC workflow to generate a short lived
-certificate based on an identity provider. This will be relevant when verifying
-the signature, as shown below.
-
-**Note**: The signature is stored as `<file>.sig` for a model serialized as a
-single file, and `<dir>/model.sig` for a model in a folder-based format.
-
-For verification, we need to pass both the path to the model and identity
-related arguments:
-
-```bash
-python3 main.py verify --path "${path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
-```
-
-For developers signing models, there are three identity providers that can
-be used at the moment:
-
-* Google's provider is `https://accounts.google.com`.
-* GitHub's provider is `https://github.com/login/oauth`.
-* Microsoft's provider is `https://login.microsoftonline.com`.
-
-For automated signing using a workload identity, the following platforms
-are currently supported, shown with their expected identities:
-
-* GitHub Actions
-  (`https://github.com/octo-org/octo-automation/.github/workflows/oidc.yml@refs/heads/main`)
-* GitLab CI
-  (`https://gitlab.com/my-group/my-project//path/to/.gitlab-ci.yml@refs/heads/main`)
-* Google Cloud Platform (`SERVICE_ACCOUNT_NAME@PROJECT_ID.iam.gserviceaccount.com`)
-* Buildkite CI (`https://buildkite.com/ORGANIZATION_SLUG/PIPELINE_SLUG`)
-
-### Supported Models
-
-The library supports multiple models, from multiple training frameworks and
-model hubs.
-
-For example, to sign and verify a Bertseq2seq model, trained with TensorFlow,
-stored in TFHub, run the following commands:
-
-```bash
-model_path=bertseq2seq
-wget "https://tfhub.dev/google/bertseq2seq/bert24_en_de/1?tf-hub-format=compressed" -O "${model_path}".tgz
-mkdir -p "${model_path}"
-cd "${model_path}" && tar xvzf ../"${model_path}".tgz && rm ../"${model_path}".tgz && cd -
-python3 main.py sign --path "${model_path}"
-python3 main.py verify --path "${model_path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
-```
-
-For models stored in Hugging Face we need the large file support from git, which
-can be obtained via
-
-```bash
-sudo apt install git-lfs
-git lfs install
-```
-
-After this, we can sign and verify a Bert base model:
-
-```bash
-model_name=bert-base-uncased
-model_path="${model_name}"
-git clone --depth=1 "https://huggingface.co/${model_name}" && rm -rf "${model_name}"/.git
-python3 main.py sign --path "${model_path}"
-python3 main.py verify --path "${model_path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
-```
-
-Similarly, we can sign and verify a Falcon model:
-
-```bash
-model_name=tiiuae/falcon-7b
-model_path=$(echo "${model_name}" | cut -d/ -f2)
-git clone --depth=1 "https://huggingface.co/${model_name}" && rm -rf "${model_name}"/.git
-python3 main.py sign --path "${model_path}"
-python3 main.py verify --path "${model_path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
-```
-
-We can also support models from  the PyTorch Hub:
-
-```bash
-model_name=hustvl/YOLOP
-model_path=$(echo "${model_name}" | cut -d/ -f2)
-wget "https://github.com/${model_name}/archive/main.zip" -O "${model_path}".zip
-mkdir -p "${model_path}"
-cd "${model_path}" && unzip ../"${model_path}".zip && rm ../"${model_path}".zip && shopt -s dotglob && mv YOLOP-main/* . && shopt -u dotglob && rmdir YOLOP-main/ && cd -
-python3 main.py sign --path "${model_path}"
-python3 main.py verify --path "${model_path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
-```
-
-We also support ONNX models, for example Roberta:
-
-```bash
-model_name=roberta-base-11
-model_path="${model_name}.onnx"
-wget "https://github.com/onnx/models/raw/main/text/machine_comprehension/roberta/model/${model_name}.onnx"
-python3 main.py sign --path "${model_path}"
-python3 main.py verify --path "${model_path}" \
-    --identity-provider https://accounts.google.com \
-    --identity myemail@gmail.com
+$ MODEL_PATH='/path/to/your/model'
+$ openssl ecparam -name secp256k1 -genkey -noout -out ec-secp256k1-priv-key.pem
+$ openssl ec -in ec-secp256k1-priv-key.pem -pubout > ec-secp256k1-pub-key.pem
+$ source .venv/bin/activate
+# SIGN
+(.venv) $ python3 sign.py --model_path ${MODEL_PATH} --method private-key --private-key ec-secp256k1-priv-key.pem
+...
+#VERIFY
+(.venv) $ python3 verify.py --model_path ${MODEL_PATH} --method private-key --public-key ec-secp256k1-pub-key.pem
+...
 ```
 
 ## Benchmarking
