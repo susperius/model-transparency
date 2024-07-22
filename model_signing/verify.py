@@ -25,7 +25,7 @@ from sigstore_protobuf_specs.dev.sigstore.bundle import v1 as bundle_pb
 from model_signing.hashing import file
 from model_signing.hashing import memory
 from model_signing.manifest import in_toto
-from model_signing.serialization import itemized
+from model_signing.serialization import serialize_by_file
 from model_signing.signature import SUPPORTED_METHODS
 from model_signing.signature import verifying
 from model_signing.signature import key
@@ -99,7 +99,7 @@ def __verify_model(
 
     log.info('signature verification passed')
 
-    serializer = itemized.FilesSerializer(
+    serializer = serialize_by_file.FilesSerializer(
         file_hasher_factory=hasher_factory,
         ignore_paths=[signature_path.name])
     local_manifest = serializer.serialize(model_path)
