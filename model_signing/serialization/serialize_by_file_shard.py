@@ -117,7 +117,10 @@ class ShardedDFSSerializer(serialization.Serializer):
         self._shard_size = hasher.shard_size
 
     @override
-    def serialize(self, model_path: pathlib.Path) -> manifest.DigestManifest:
+    def serialize(
+            self,
+            model_path: pathlib.Path,
+            ignored_paths: list[str] = []) -> manifest.DigestManifest:
         # Note: This function currently uses `pathlib.Path.glob` so the DFS
         # expansion relies on the `glob` implementation performing a DFS. We
         # will be truthful again when switching to `pathlib.Path.walk`, after
@@ -171,7 +174,8 @@ class ShardedDFSSerializer(serialization.Serializer):
         return manifest.DigestManifest(self._merge_hasher.compute())
 
     def _convert_paths_to_tasks(
-        self, paths: Iterable[pathlib.Path], root_path: pathlib.Path
+        self, paths: Iterable[pathlib.Path], root_path: pathlib.Path,
+        ignore_paths: list[str] = []
     ) -> list[_ShardSignTask]:
         """Returns the tasks that would hash shards of files in parallel.
 
@@ -195,6 +199,8 @@ class ShardedDFSSerializer(serialization.Serializer):
 
         tasks = []
         for path in paths:
+            if path.name in ignore_paths:
+                continue
             serialize_by_file.check_file_or_directory(path)
             relative_path = path.relative_to(root_path)
 
@@ -271,7 +277,8 @@ class ShardedFilesSerializer(serialization.Serializer):
 
     @override
     def serialize(
-        self, model_path: pathlib.Path
+        self, model_path: pathlib.Path,
+        ignore_paths: list[str] = []
     ) -> manifest.ShardLevelManifest:
         # TODO: github.com/sigstore/model-transparency/issues/196 - Add checks
         # to exclude symlinks if desired.
@@ -286,6 +293,8 @@ class ShardedFilesSerializer(serialization.Serializer):
             # with `pathlib.Path.walk` for a clearer interface, and some speed
             # improvement.
             for path in model_path.glob("**/*"):
+                if path.name in ignore_paths:
+                    continue
                 serialize_by_file.check_file_or_directory(path)
                 if path.is_file():
                     shards.extend(self._get_shards(path))

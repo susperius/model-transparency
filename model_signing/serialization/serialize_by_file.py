@@ -100,7 +100,9 @@ class DFSSerializer(serialization.Serializer):
         self._merge_hasher_factory = merge_hasher_factory
 
     @override
-    def serialize(self, model_path: pathlib.Path) -> manifest.DigestManifest:
+    def serialize(self,
+                  model_path: pathlib.Path,
+                  ignore_paths: list[str] = []) -> manifest.DigestManifest:
         # TODO: github.com/sigstore/model-transparency/issues/196 - Add checks
         # to exclude symlinks if desired.
         check_file_or_directory(model_path)
@@ -109,15 +111,19 @@ class DFSSerializer(serialization.Serializer):
             self._file_hasher.set_file(model_path)
             return manifest.DigestManifest(self._file_hasher.compute())
 
-        return manifest.DigestManifest(self._dfs(model_path))
+        return manifest.DigestManifest(self._dfs(model_path, ignore_paths))
 
-    def _dfs(self, directory: pathlib.Path) -> hashing.Digest:
+    def _dfs(self,
+             directory: pathlib.Path,
+             ignore_paths: list[str] = []) -> hashing.Digest:
         # TODO: github.com/sigstore/model-transparency/issues/196 - Add support
         # for excluded files.
         children = sorted([x for x in directory.iterdir()])
 
         hasher = self._merge_hasher_factory()
         for child in children:
+            if child.name in ignore_paths:
+                continue
             check_file_or_directory(child)
 
             if child.is_file():
