@@ -20,6 +20,7 @@ from model_signing import model
 from model_signing.hashing import file
 from model_signing.hashing import memory
 from model_signing.serialization import serialize_by_file
+from model_signing.signature import SUPPORTED_METHODS
 from model_signing.signature import key
 from model_signing.signature import pki
 from model_signing.signature import signing
@@ -87,6 +88,9 @@ def __arguments() -> argparse.Namespace:
 
 def __get_payload_signer(args: argparse.Namespace) -> signing.Signer:
     if args.method == 'sigstore':
+        signer = sigstore.SigstoreSigner()
+        log.info(f'Signing ID provider: {signer.id_provider}')
+        log.info(f'Signing ID: {signer.signing_id}')
         return sigstore.SigstoreSigner()
     elif args.method == 'private-key':
         __check_private_key_options(args)
@@ -101,7 +105,9 @@ def __get_payload_signer(args: argparse.Namespace) -> signing.Signer:
     elif args.method == 'skip':
         return fake.FakeSigner()
     else:
-        raise ValueError(f'unsupported signing method {args.method}')
+        log.error(f'unsupported signing method {args.method}')
+        log.error(f'supported methods: {SUPPORTED_METHODS}')
+        exit()
 
 
 def __check_private_key_options(args: argparse.Namespace):
@@ -127,6 +133,7 @@ def __check_pki_options(args: argparse.Namespace):
 def main():
     logging.basicConfig(level=logging.INFO)
     args = __arguments()
+
     log.info(f'Creating signer for {args.method}')
     payload_signer = __get_payload_signer(args)
     log.info(f'Signing model at {args.model_path}')

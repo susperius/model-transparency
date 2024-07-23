@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """This script can be used to verify model signatures."""
+import argparse
+import logging
 import pathlib
 
-from absl import app
-from absl import logging as log
-from absl import flags
 from sigstore_protobuf_specs.dev.sigstore.bundle import v1 as bundle_pb
 
 from model_signing import model
@@ -30,76 +29,110 @@ from model_signing.signature import pki
 from model_signing.signature import sigstore
 from model_signing.signature import fake
 
-
-_SIG = flags.DEFINE_string('sig_path', '', 'the path to the signature')
-_PATH = flags.DEFINE_string(
-    'model_path', '', 'the path to the model\'s base folder.')
-_METHOD = flags.DEFINE_enum(
-    'method', None, SUPPORTED_METHODS,
-    'the signing method to use.')
-
-# Sigstore flags
-_ID_PROVIDER = flags.DEFINE_string(
-    'id_provider', '', 'URL to the ID provider', required=False)
-_ID = flags.DEFINE_string(
-    'id', '', 'the identity that is expected to have signed the model.',
-    required=False)
-# bring your own key flag
-_KEY_PATH = flags.DEFINE_string(
-    'public_key', '', 'the path to the public key used for verifying',
-    required=False)
-# bring your own PKI flag
-_ROOT_CERTS = flags.DEFINE_list(
-    'root_certs', None,
-    ('paths to pem encoded certifcate files or single ',
-     'file containing used as the root of trust'),
-    required=False
-)
+log = logging.getLogger(__name__)
 
 
-def __check_sigstore_flags():
-    if _ID.value == '' or _ID_PROVIDER.value == '':
+def __arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser('Script to verify models')
+    parser.add_argument(
+        '--sig_path',
+        help='the path to the signature',
+        required=True,
+        type=pathlib.Path,
+        dest='sig_path')
+    parser.add_argument(
+        '--model_path',
+        help='the path to the model\'s base folder',
+        type=pathlib.Path,
+        dest='model_path')
+    
+    method_cmd = parser.add_subparsers(required=True, dest='method')
+    # sigstore subcommand
+    sigstore = method_cmd.add_parser('sigstore')
+    sigstore.add_argument(
+        '--id_provider',
+        help='URL to the ID provider',
+        required=True,
+        type=str,
+        dest='id_provider')
+    sigstore.add_argument(
+        '--id',
+        help='the identity that is expected to have signed the model',
+        required=True,
+        type=str,
+        dest='id')
+    # pki subcommand
+    pki = method_cmd.add_parser('pki')
+    pki.add_argument(
+        '--root_certs',
+        help=('paths to PEM encoded certificate files or a single file ',
+              'used as the root of trust'),
+        required=False,
+        type=list[str],
+        default=[],
+        dest='root_certs'
+    )
+    # private key subcommand
+    pKey = method_cmd.add_parser('private-key')
+    pKey.add_argument(
+        '--public_key',
+        help='the path to the public key used for verification',
+        required=True,
+        type=pathlib.Path,
+        dest='key')
+
+    method_cmd.add_parser('skip')
+
+    return parser.parse_args()
+
+
+def __check_sigstore_flags(args: argparse.Namespace):
+    if args.id == '' or args.id_provider == '':
         log.error(
             '--id_provider and --id are required for sigstore verification')
         exit()
 
 
-def __check_private_key_flags():
-    if _KEY_PATH.value == '':
+def __check_private_key_flags(args: argparse.Namespace):
+    if args.key == '':
         log.error('--public_key must be defined')
         exit()
 
 
-def __check_pki_flags():
-    if not _ROOT_CERTS.value:
+def __check_pki_flags(args: argparse.Namespace):
+    if not args.root_certs:
         log.warning('no root of trust is set using system default')
 
 
-def main(_):
+def main():
+    logging.basicConfig(level=logging.INFO)
+    args = __arguments()
+
     verifier: verifying.Verifier
-    log.info(f'Creating verifier for {_METHOD.value}')
-    if _METHOD.value == 'sigstore':
-        __check_sigstore_flags()
+    log.info(f'Creating verifier for {args.method}')
+    if args.method == 'sigstore':
+        __check_sigstore_flags(args)
         verifier = sigstore.SigstoreVerifier(
-            _ID_PROVIDER.value, _ID.value)
-    elif _METHOD.value == 'private-key':
-        __check_private_key_flags()
+            args.id_provider, args.id)
+    elif args.method == 'private-key':
+        __check_private_key_flags(args)
         verifier = key.ECKeyVerifier.from_path(
-            _KEY_PATH.value)
-    elif _METHOD.value == 'pki':
-        __check_pki_flags()
+            args.key)
+    elif args.method == 'pki':
+        __check_pki_flags(args)
         verifier = pki.PKIVerifier.from_paths(
-            _ROOT_CERTS.value)
-    elif _METHOD.value == 'skip':
+            args.root_certs)
+    elif args.method == 'skip':
         verifier = fake.FakeVerifier()
     else:
-        raise ValueError(f'unsupported signing method {_METHOD.value}')
+        log.error(f'unsupported verification method {args.method}')
+        log.error(f'supported methods: {SUPPORTED_METHODS}')
+        exit()
 
-    log.info(f'Verifying model signature from {_PATH.value}')
+    log.info(f'Verifying model signature from {args.sig_path}')
 
-    sig_path = pathlib.Path(_SIG.value)
     bundle = bundle_pb.Bundle().from_json(
-        value=sig_path.read_text())
+        value=args.sig_path.read_text())
 
     def hasher_factory(file_path: pathlib.Path) -> file.FileHasher:
         return file.SimpleFileHasher(
@@ -114,9 +147,9 @@ def main(_):
         model.verify(
             bundle=bundle,
             verifier=verifier,
-            model_path=pathlib.Path(_PATH.value),
+            model_path=args.model_path,
             serializer=serializer,
-            ignore_paths=[sig_path.name])
+            ignore_paths=[args.sig_path.name])
     except verifying.VerificationError as err:
         log.error(f'verification failed: {err}')
 
@@ -124,4 +157,4 @@ def main(_):
 
 
 if __name__ == '__main__':
-    app.run(main)
+    main()
