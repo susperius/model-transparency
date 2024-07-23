@@ -149,7 +149,6 @@ class FilesSerializer(serialization.Serializer):
         self,
         file_hasher_factory: Callable[[pathlib.Path], file.FileHasher],
         max_workers: int | None = None,
-        ignore_paths: list[str] = [],
     ):
         """Initializes an instance to serialize a model with this serializer.
 
@@ -161,10 +160,12 @@ class FilesSerializer(serialization.Serializer):
         """
         self._hasher_factory = file_hasher_factory
         self._max_workers = max_workers
-        self._ignore_paths = ignore_paths
 
     @override
-    def serialize(self, model_path: pathlib.Path) -> manifest.FileLevelManifest:
+    def serialize(self,
+                  model_path: pathlib.Path,
+                  ignore_paths: list[str] = []
+                  ) -> manifest.FileLevelManifest:
         # TODO: github.com/sigstore/model-transparency/issues/196 - Add checks
         # to exclude symlinks if desired.
         check_file_or_directory(model_path)
@@ -179,7 +180,7 @@ class FilesSerializer(serialization.Serializer):
             # improvement.
             for path in model_path.glob("**/*"):
                 check_file_or_directory(path)
-                if path.is_file() and path.name not in self._ignore_paths:
+                if path.is_file() and path.name not in ignore_paths:
                     paths.append(path)
 
         manifest_items = []

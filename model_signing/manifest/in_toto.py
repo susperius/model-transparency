@@ -46,10 +46,10 @@ def _file_level_manifest_to_statement(
         statement.Statement: the in-toto statement representing the manifest
     """
     subjects: list[resource_descriptor.ResourceDescriptor] = []
-    for item in manifest.items:
+    for path, digest in manifest.files.items():
         s = resource_descriptor.ResourceDescriptor(
-            name=str(item.path),
-            digest={item.digest.algorithm: item.digest.digest_hex},
+            name=str(path),
+            digest={digest.algorithm: digest.digest_hex},
         ).pb
         subjects.append(s)
     return statement.Statement(
@@ -91,6 +91,18 @@ def _statement_to_file_level_manifest(
 def manifest_to_statement(
         model_manifest: manifest.Manifest
         ) -> statement.Statement:
+    """Converts a manifest to an in-toto statement
+
+    Args:
+        model_manifest (manifest.Manifest): the manifest
+
+    Raises:
+        ValueError: for non supported manifest types
+
+    Returns:
+        statement.Statement: the resulting in-toto statement
+    """
+    # TODO(#248): support for the other manifest types
     if isinstance(model_manifest, manifest.FileLevelManifest):
         return _file_level_manifest_to_statement(model_manifest)
     raise ValueError('manifest type not supported')
@@ -99,6 +111,21 @@ def manifest_to_statement(
 def statement_to_manifest(
         stmnt: statement.Statement
         ) -> manifest.Manifest:
+    """Converts a statement to a manifest type.
+
+    The type of the manifest depends on the in-tota statments
+    `manifest_type` predicate.
+
+    Args:
+        stmnt (statement.Statement): the statement
+
+    Raises:
+        ValueError: for non supported manifest types
+
+    Returns:
+        manifest.Manifest: manifest according to the statement
+    """
+    # TODO(#248): support for the other manifest types
     if stmnt.pb.predicate['manifest_type'] == _FILE_LEVEL_MANIFEST:
         return _statement_to_file_level_manifest(stmnt)
     raise ValueError('manifest type not supported')

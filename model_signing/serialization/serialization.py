@@ -28,6 +28,9 @@ class Serializer(metaclass=abc.ABCMeta):
     """Generic ML model format serializer."""
 
     @abc.abstractmethod
-    def serialize(self, model_path: pathlib.Path) -> manifest.Manifest:
+    def serialize(self,
+                  model_path: pathlib.Path,
+                  ignore_paths: list[str]
+                  ) -> manifest.Manifest:
         """Serializes the model given by the `model_path` argument."""
         pass

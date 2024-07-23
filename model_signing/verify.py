@@ -17,14 +17,11 @@ import pathlib
 from absl import app
 from absl import logging as log
 from absl import flags
-from google.protobuf import json_format
-from in_toto_attestation.v1 import statement
-from in_toto_attestation.v1 import statement_pb2 as statement_pb
 from sigstore_protobuf_specs.dev.sigstore.bundle import v1 as bundle_pb
 
+from model_signing import model
 from model_signing.hashing import file
 from model_signing.hashing import memory
-from model_signing.manifest import in_toto
 from model_signing.serialization import serialize_by_file
 from model_signing.signature import SUPPORTED_METHODS
 from model_signing.signature import verifying
@@ -78,44 +75,6 @@ def __check_pki_flags():
         log.warning('no root of trust is set using system default')
 
 
-def __verify_model(
-        signature_path: pathlib.Path,
-        model_path: pathlib.Path,
-        verifier: verifying.Verifier):
-
-    def hasher_factory(file_path: pathlib.Path) -> file.FileHasher:
-        return file.SimpleFileHasher(
-            file=file_path,
-            content_hasher=memory.SHA256(),
-        )
-
-    bundle = bundle_pb.Bundle().from_json(
-        value=signature_path.read_text())
-    try:
-        verifier.verify(bundle)
-    except verifying.VerificationError as err:
-        log.error(f'signature error: {err}')
-        return
-
-    log.info('signature verification passed')
-
-    serializer = serialize_by_file.FilesSerializer(
-        file_hasher_factory=hasher_factory,
-        ignore_paths=[signature_path.name])
-    local_manifest = serializer.serialize(model_path)
-
-    payload = bundle.dsse_envelope.payload
-    peer_statement_pb = json_format.Parse(payload, statement_pb.Statement())
-    peer_statement = statement.Statement.copy_from_pb(peer_statement_pb)
-    peer_manifest = in_toto.statement_to_manifest(peer_statement)
-
-    if peer_manifest != local_manifest:
-        log.error('the signed manifest does not match the local model')
-        return
-
-    log.info('all checks passed')
-
-
 def main(_):
     verifier: verifying.Verifier
     log.info(f'Creating verifier for {_METHOD.value}')
@@ -137,10 +96,31 @@ def main(_):
         raise ValueError(f'unsupported signing method {_METHOD.value}')
 
     log.info(f'Verifying model signature from {_PATH.value}')
-    __verify_model(
-        pathlib.Path(_SIG.value),
-        pathlib.Path(_PATH.value),
-        verifier)
+
+    sig_path = pathlib.Path(_SIG.value)
+    bundle = bundle_pb.Bundle().from_json(
+        value=sig_path.read_text())
+
+    def hasher_factory(file_path: pathlib.Path) -> file.FileHasher:
+        return file.SimpleFileHasher(
+            file=file_path,
+            content_hasher=memory.SHA256(),
+        )
+
+    serializer = serialize_by_file.FilesSerializer(
+        file_hasher_factory=hasher_factory)
+
+    try:
+        model.verify(
+            bundle=bundle,
+            verifier=verifier,
+            model_path=pathlib.Path(_PATH.value),
+            serializer=serializer,
+            ignore_paths=[sig_path.name])
+    except verifying.VerificationError as err:
+        log.error(f'verification failed: {err}')
+
+    log.info('all checks passed')
 
 
 if __name__ == '__main__':

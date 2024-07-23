@@ -19,6 +19,8 @@ Model signers should monitor for occurences of their signing identity in the
 log. Sigstore is actively developing a [log
 monitor](https://github.com/sigstore/rekor-monitor) that runs on GitHub Actions.
 
+![Signing models with Sigstore](images/sigstore-model-diagram.png)
+
 ## Model Signing CLI
 
 The `sign.py` and `verify.py` scripts aim to provide the necessary functionality
